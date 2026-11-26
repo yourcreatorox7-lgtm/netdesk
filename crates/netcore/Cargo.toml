@@ -1,0 +1,13 @@
+[package]
+name = "netcore"
+description = "هسته‌ی عیب‌یابی شبکه و مدیریت کانفیگ — فقط کتابخانه‌ی استاندارد Rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# عمداً بدون وابستگی: قابل ممیزی، بدون ریسک زنجیره‌ی تأمین.
+
+[[bin]]
+name = "netcore-cli"
+path = "src/bin/cli.rs"

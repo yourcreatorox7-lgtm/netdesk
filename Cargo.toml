@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/netcore"]
+# src-tauri جداگانه ساخته می‌شود (به crateهای Tauri از اینترنت نیاز دارد)
+# تا هسته همیشه آفلاین و بدون وابستگی قابل تست بماند:  cargo test
+exclude = ["src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

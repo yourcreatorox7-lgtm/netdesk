@@ -1,0 +1,2 @@
+# vendored sources are stored byte-for-byte
+vendor/** -text
