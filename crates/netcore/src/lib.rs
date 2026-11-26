@@ -23,6 +23,7 @@ pub mod config;
 pub mod dns;
 pub mod json;
 pub mod localhttp;
+pub mod netenv;
 pub mod probe;
 pub mod proxy;
 pub mod rdp;
@@ -34,6 +35,7 @@ pub mod singbox;
 pub mod stats;
 pub mod tools;
 pub mod winreg;
+pub mod xray;
 
 /// برچسب منشأ هر قابلیت؛ رابط کاربری با این، «محلی و رایگان» را از
 /// «نیازمند سرویس خارجی» جدا نشان می‌دهد (الزام بخش ۱ سند پروژه).

@@ -88,7 +88,7 @@ static CATALOG: &[ToolSpec] = &[
         name: "Xray-core",
         url: "https://github.com/yourcreatorox7-lgtm/netdesk/blob/main/docs/tutorials/xray.fa.md",
         license: "MPL-2.0",
-        summary: "هسته‌ی جایگزین با کانفیگی که خودتان می‌نویسید (NetDesk برای Xray کانفیگ نمی‌سازد).",
+        summary: "هسته‌ی دوم. «اتصال هوشمند» آن را فقط برای پروفایل‌های xhttp به‌کار می‌برد (sing-box xhttp ندارد) و کانفیگش را خودش می‌سازد. برای کانفیگ دستی هم می‌توانید جداگانه اجرایش کنید.",
         risk: Risk::Medium,
         requires_admin: false,
         installs_root_ca: false,
@@ -98,7 +98,7 @@ static CATALOG: &[ToolSpec] = &[
             "فایل را طبق آموزش از سورس بسازید. اگر فایل آماده دانلود می‌کنید، فقط از منبع رسمی سازنده بگیرید و checksum را مقایسه کنید.",
             "کانفیگ Xray را خودتان می‌نویسید؛ اگر inbound را روی 0.0.0.0 باز کنید، دیگران در شبکه هم می‌توانند از آن استفاده کنند.",
         ],
-        setup_hint: "مسیر xray.exe و آرگومان مثل: run -c C:\\path\\config.json",
+        setup_hint: "«پیدا کردن خودکار» را بزنید. برای پروفایل‌های xhttp آرگومان لازم نیست؛ فقط برای اجرای دستی: run -c C:\\path\\config.json",
     },
     ToolSpec {
         id: "master-http-relay",

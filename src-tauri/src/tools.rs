@@ -10,7 +10,7 @@
 //!   می‌شوند؛ خود NetDesk هرگز دسترسی مدیر ندارد.
 
 use crate::{auto, store};
-use netcore::{config::Profile, proxy, sha256, singbox, tools as cat};
+use netcore::{config::Profile, proxy, sha256, singbox, tools as cat, xray};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -323,13 +323,28 @@ pub(crate) fn core_ready(app: &AppHandle) -> Result<(), String> {
     verified(app, "sing-box").map(|_| ()).map_err(|e| format!("sing-box آماده نیست: {e} (آموزش sing-box را ببینید)"))
 }
 
+/// هسته‌های اتصال: sing-box برای همه‌چیز، Xray فقط برای پروفایل‌هایی که sing-box اجرا نمی‌کند (xhttp)
+const ENGINES: [&str; 2] = ["sing-box", "xray"];
+
+/// کدام هسته این پروفایل را اجرا می‌کند
+pub(crate) fn engine_for(p: &Profile) -> &'static str {
+    if xray::needs_xray(p) { "xray" } else { "sing-box" }
+}
+
+/// هسته تنظیم، تأیید و بدون تغییر هش است؟
+pub(crate) fn engine_ready(app: &AppHandle, id: &str) -> bool {
+    verified(app, id).is_ok()
+}
+
 pub(crate) fn core_kill(app: &AppHandle) {
     let state = app.state::<Running>();
     let mut run = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(mut r) = run.remove("sing-box") {
-        if let Some(c) = r.child.as_mut() {
-            let _ = c.kill();
-            let _ = c.wait();
+    for id in ENGINES {
+        if let Some(mut r) = run.remove(id) {
+            if let Some(c) = r.child.as_mut() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
         }
     }
 }
@@ -337,10 +352,12 @@ pub(crate) fn core_kill(app: &AppHandle) {
 pub(crate) fn core_alive(app: &AppHandle, fingerprint: &str) -> bool {
     let state = app.state::<Running>();
     let mut run = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    run.get_mut("sing-box")
-        .filter(|r| r.profile.as_deref() == Some(fingerprint))
-        .and_then(|r| r.child.as_mut())
-        .is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+    ENGINES.iter().any(|id| {
+        run.get_mut(*id)
+            .filter(|r| r.profile.as_deref() == Some(fingerprint))
+            .and_then(|r| r.child.as_mut())
+            .is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+    })
 }
 
 /// مسیر و هش هسته‌ی تأییدشده (برای ساخت کیت سرور)
@@ -353,14 +370,15 @@ pub(crate) fn core_binary(app: &AppHandle) -> Result<(PathBuf, String), String> 
 /// هسته را اجرا می‌کند و تا باز شدن پورت محلی صبر می‌کند. فراخواننده باید
 /// پیش از این مطمئن شده باشد که پورت آزاد است.
 pub(crate) fn core_start(app: &AppHandle, p: &Profile, fingerprint: &str, port: u16, tweak: singbox::Tweak) -> Result<(), String> {
-    let (_, t) = verified(app, "sing-box")?;
-    let cfg = singbox::build_config_with(p, port, tweak)?;
+    let engine = engine_for(p);
+    let (_, t) = verified(app, engine).map_err(|e| format!("{engine} آماده نیست: {e}"))?;
+    let cfg = if engine == "xray" { xray::build_config(p, port)? } else { singbox::build_config_with(p, port, tweak)? };
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("run");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file = dir.join(format!("sb-{fingerprint}.json"));
+    let file = dir.join(format!("core-{fingerprint}.json"));
     std::fs::write(&file, &cfg).map_err(|e| e.to_string())?;
     let args = vec!["run".to_string(), "-c".to_string(), file.display().to_string()];
-    let mut child = match spawn_logged(app, "sing-box", &t.path, &args, None) {
+    let mut child = match spawn_logged(app, engine, &t.path, &args, None) {
         Ok(c) => c,
         Err(e) => {
             let _ = std::fs::remove_file(&file);
@@ -382,13 +400,13 @@ pub(crate) fn core_start(app: &AppHandle, p: &Profile, fingerprint: &str, port: 
     if !listening || !matches!(child.try_wait(), Ok(None)) {
         let _ = child.kill();
         let _ = child.wait();
-        let log = tail(&log_path(app, "sing-box")?, 1500);
-        store::log(app, "singbox", fingerprint, false, &log);
-        return Err(format!("sing-box اجرا نشد: {}", log.trim().lines().last().unwrap_or("بدون پیام")));
+        let log = tail(&log_path(app, engine)?, 1500);
+        store::log(app, engine, fingerprint, false, &log);
+        return Err(format!("{engine} اجرا نشد: {}", log.trim().lines().last().unwrap_or("بدون پیام")));
     }
     let state = app.state::<Running>();
     let mut run = state.0.lock().map_err(|e| e.to_string())?;
-    run.insert("sing-box".into(), RunInfo { child: Some(child), elevated: false, started_at: store::now(), port: Some(port), profile: Some(fingerprint.to_string()) });
+    run.insert(engine.into(), RunInfo { child: Some(child), elevated: false, started_at: store::now(), port: Some(port), profile: Some(fingerprint.to_string()) });
     Ok(())
 }
 

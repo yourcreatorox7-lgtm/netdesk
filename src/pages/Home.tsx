@@ -22,7 +22,13 @@ export default function Home({ go, tutorial }: { go: (r: Route) => void; tutoria
   const conn = status.connected;
 
   const core = tools?.find((t) => t.id === "sing-box");
-  const usable = profiles?.filter((p) => p.hasSecret).length ?? 0;
+  // xhttp فقط با Xray کار می‌کند؛ sing-box آن را اجرا نمی‌کند
+  const xrayReady = !!tools?.find((t) => t.id === "xray")?.consented;
+  const xhttpAll = profiles?.filter((p) => ["xhttp", "splithttp"].includes(p.params.type ?? p.params.net ?? "")).length ?? 0;
+  const xhttp = xrayReady ? 0 : xhttpAll; // با Xray آماده، xhttp هم قابل اتصال است
+  const usable = (profiles?.filter((p) => p.hasSecret).length ?? 0) - xhttp;
+  const [warnings, setWarnings] = useState<string[]>([]);
+  useEffect(() => { api.netEnv().then(setWarnings).catch(() => {}); }, [status.phase === "failed"]);
   const ready = !!core?.consented && usable > 0;
 
   const connect = async () => {
@@ -65,7 +71,7 @@ export default function Home({ go, tutorial }: { go: (r: Route) => void; tutoria
           ) : (
             <p className="muted">
               {ready
-                ? `${num(usable, 0)} پروفایل آماده است. برنامه سریع‌ترین سرور سالم را پیدا و وصل می‌کند.`
+                ? `${num(usable, 0)} پروفایل آماده است${xhttp ? `؛ ${num(xhttp, 0)} پروفایل xhttp فقط با Xray کار می‌کند؛ Xray را در «هسته و ابزارها» ثبت کنید` : ""}. برنامه سریع‌ترین سرور سالم را پیدا و وصل می‌کند.`
                 : "پیش از اولین اتصال، دو قدم پایین را کامل کنید."}
             </p>
           )}
@@ -88,11 +94,18 @@ export default function Home({ go, tutorial }: { go: (r: Route) => void; tutoria
         </section>
       )}
 
+      {warnings.length > 0 && (
+        <section className="panel" role="note" style={{ marginTop: 16 }}>
+          <h2>نکته‌ی محیط</h2>
+          <ul className="steps">{warnings.map((w, i) => <li key={i} className="bad">{w}</li>)}</ul>
+        </section>
+      )}
+
       {status.steps.length > 0 && (
         <details className="panel" style={{ marginTop: 16 }} open={testing || status.phase === "failed"}>
           <summary>گزارش لحظه‌ای</summary>
           <ul className="steps">
-            {status.steps.slice(-14).map((s, i) => <li key={i} className={s.startsWith("✓") ? "ok" : s.startsWith("✗") ? "bad" : ""}>{s}</li>)}
+            {status.steps.slice(-40).map((s, i) => <li key={i} className={s.startsWith("✓") ? "ok" : s.startsWith("✗") || s.startsWith("⚠") ? "bad" : ""}>{s}</li>)}
           </ul>
           {status.phase === "failed" && <button onClick={() => go("assistant")}>از دستیار هوشمند کمک بگیر</button>}
         </details>

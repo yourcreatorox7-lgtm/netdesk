@@ -175,6 +175,16 @@ pub fn outbound(p: &Profile) -> Result<Json, String> {
     Ok(Json::Obj(m))
 }
 
+/// چرا sing-box این پروفایل را نمی‌تواند اجرا کند (None یعنی قابل اجراست).
+/// xhttp مخصوص Xray است و در sing-box وجود ندارد.
+pub fn unsupported_reason(p: &Profile) -> Option<String> {
+    let kind = p.params.get("type").or(p.params.get("net")).map(|x| x.as_str()).unwrap_or("tcp");
+    if matches!(kind, "xhttp" | "splithttp") {
+        return Some("xhttp فقط با Xray کار می‌کند، نه sing-box".into());
+    }
+    build_config(p, 10808).err()
+}
+
 /// ترفند ضد فیلتر روی دست‌دهی TLS؛ اگر اتصال معمولی کار نکند امتحان می‌شود.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tweak {
@@ -301,6 +311,16 @@ mod tests {
         assert_eq!(tweaks_for(&quic), vec![Tweak::None]);
         let plain = parse_line("socks5://127.0.0.1:1080").unwrap();
         assert_eq!(tweaks_for(&plain), vec![Tweak::None]);
+    }
+
+    #[test]
+    fn unsupported_profiles_are_explained() {
+        let x = parse_line("vless://11111111-2222-3333-4444-555555555555@h.example:443?security=tls&type=xhttp&path=%2Fp#x").unwrap();
+        assert!(unsupported_reason(&x).unwrap().contains("xhttp"));
+        let k = parse_line("vless://11111111-2222-3333-4444-555555555555@h.example:443?type=kcp#k").unwrap();
+        assert!(unsupported_reason(&k).is_some());
+        let ok = parse_line("trojan://pw@t.example.com:443#t").unwrap();
+        assert!(unsupported_reason(&ok).is_none());
     }
 
     #[test]

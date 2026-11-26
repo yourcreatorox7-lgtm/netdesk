@@ -5,6 +5,7 @@
 mod ai;
 mod auto;
 mod commands;
+mod netenv;
 mod secrets;
 mod serverkit;
 mod store;
@@ -69,6 +70,7 @@ pub fn run() {
             auto::sub_add,
             auto::sub_remove,
             auto::sub_update,
+            netenv::net_env,
             // دستیار هوش مصنوعی محلی (Ollama)
             ai::ai_status,
             ai::ai_pull,

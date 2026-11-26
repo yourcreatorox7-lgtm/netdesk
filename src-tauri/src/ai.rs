@@ -6,7 +6,7 @@
 //!   فرمان دلخواه، فایل یا ابزار پرخطر و تأیید هشدارها برایش وجود ندارد.
 
 use crate::{auto, store, tools};
-use netcore::localhttp;
+use netcore::{localhttp, netenv};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -154,9 +154,12 @@ fn safe_context(app: &AppHandle) -> String {
     }
     // گام‌های اخیر؛ نام پروفایل‌ها بر اساس ساختار خط حذف می‌شود
     if let Some(steps) = status["steps"].as_array() {
-        for line in steps.iter().rev().take(10).rev().filter_map(Value::as_str) {
+        for line in steps.iter().rev().take(40).rev().filter_map(Value::as_str) {
             s.push_str(&format!("رویداد: {}\n", redact_step(line)));
         }
+    }
+    for w in crate::netenv::scan(app) {
+        s.push_str(&format!("محیط: {}\n", netenv::scrub_addresses(&w)));
     }
     s
 }
@@ -168,10 +171,17 @@ fn redact_step(line: &str) -> String {
         Some(i) => format!("{}sing-box اجرا نشد", &line[..i]),
         None => line.to_string(),
     };
-    for mark in ["✓", "✗"] {
-        if line.starts_with(mark) {
+    for mark in ["✓", "✗", "⊘"] {
+        if let Some(rest) = line.strip_prefix(mark) {
+            // قالب: «✗ [شماره] نام (حالت) — خطا»؛ نام حذف می‌شود، شماره می‌ماند
+            let who = rest
+                .trim_start()
+                .strip_prefix('[')
+                .and_then(|r| r.split_once(']'))
+                .map(|(n, _)| format!("پروفایل {}", n.trim()))
+                .unwrap_or_else(|| "یک پروفایل".into());
             let tail = line.rsplit_once(" — ").map(|x| x.1).unwrap_or("");
-            return format!("{mark} یک پروفایل — {tail}");
+            return format!("{mark} {who} — {}", netenv::scrub_addresses(tail));
         }
     }
     if line.starts_with("اتصال برقرار شد") {
@@ -180,7 +190,7 @@ fn redact_step(line: &str) -> String {
     if line.starts_with("اتصال «") {
         return "اتصال قطع شد؛ جابه‌جایی خودکار".into();
     }
-    line
+    netenv::scrub_addresses(&line)
 }
 
 const SYSTEM: &str = "تو دستیار برنامه‌ی NetDesk هستی (برنامه‌ی دسکتاپ عیب‌یابی شبکه و اتصال پروکسی). همیشه کوتاه، ساده و به فارسی جواب بده.

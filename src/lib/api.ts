@@ -129,6 +129,7 @@ export const api = {
 
   // اتصال خودکار و اشتراک‌ها
   autoStatus: () => (isMock ? Promise.resolve(demo.status()) : invoke<AutoStatus>("auto_status")),
+  netEnv: () => call<string[]>("net_env", {}, () => ["«happ-xray» (VPN/TUN) فعال است و ترافیک NetDesk هم از آن رد می‌شود. برای تست مستقیم، آن را موقتاً خاموش کنید."]),
   smartConnect: () => call<Connected>("smart_connect", {}, () => demo.connect("a57725fad8bc1e25")),
   autoDisconnect: () => call<void>("auto_disconnect", {}, () => demo.disconnect()),
   autoSettingsGet: () => call<AutoSettings>("auto_settings_get", {}, () => ({ ...demo.settings })),

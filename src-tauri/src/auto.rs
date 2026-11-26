@@ -8,6 +8,7 @@
 use crate::{commands, secrets, store, sysproxy, tools};
 use netcore::config::{self, Profile, Protocol};
 use netcore::singbox::{self, Tweak};
+use netcore::xray;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -124,23 +125,57 @@ pub fn disconnect_inner(app: &AppHandle) {
 // ------------------------------------------------------------ نامزدها
 
 struct Candidate {
+    /// شماره‌ی پروفایل در فهرست (از ۱)؛ در گزارش‌ها به‌جای نام می‌آید
+    ordinal: usize,
     fingerprint: String,
     name: String,
     profile: Profile,
     tcp_ms: Option<f64>,
 }
 
-fn load_candidates(app: &AppHandle) -> Vec<Candidate> {
+/// پروفایلی که کنار گذاشته شد و دلیلش (برای نمایش، نه حذف بی‌صدا)
+struct Skipped {
+    fingerprint: String,
+    line: String,
+    reason: String,
+}
+
+/// چرا هیچ‌کدام از هسته‌ها نمی‌توانند این پروفایل را اجرا کنند (None یعنی قابل اجراست)
+fn engine_problem(p: &Profile, xray_ready: bool) -> Option<String> {
+    if xray::needs_xray(p) {
+        return if xray_ready {
+            xray::build_config(p, 10808).err()
+        } else {
+            Some("xhttp فقط با Xray کار می‌کند؛ Xray را در «هسته و ابزارها» ثبت و تأیید کنید".into())
+        };
+    }
+    singbox::unsupported_reason(p)
+}
+
+fn load_candidates(app: &AppHandle) -> (Vec<Candidate>, Vec<Skipped>) {
     let stored: Vec<store::StoredProfile> = store::load(app, "profiles.json");
-    stored
-        .into_iter()
-        .filter_map(|s| {
-            let raw = secrets::read(&format!("profile:{}", s.fingerprint))?;
-            let profile = config::parse_line(&raw).ok()?;
-            singbox::build_config(&profile, 10808).ok()?;
-            Some(Candidate { fingerprint: s.fingerprint, name: s.name, profile, tcp_ms: None })
-        })
-        .collect()
+    let (mut ok, mut skipped) = (Vec::new(), Vec::new());
+    let xray_ready = tools::engine_ready(app, "xray");
+    for (i, s) in stored.into_iter().enumerate() {
+        let ordinal = i + 1;
+        let reason = match secrets::read(&format!("profile:{}", s.fingerprint)) {
+            None => Some("متن کامل پروفایل در انبار امن نیست".to_string()),
+            Some(raw) => match config::parse_line(&raw) {
+                Err(e) => Some(format!("خواندن پروفایل ممکن نشد: {e}")),
+                Ok(profile) => match engine_problem(&profile, xray_ready) {
+                    Some(r) => Some(r),
+                    None => {
+                        ok.push(Candidate { ordinal, fingerprint: s.fingerprint.clone(), name: s.name.clone(), profile, tcp_ms: None });
+                        None
+                    }
+                },
+            },
+        };
+        if let Some(reason) = reason {
+            skipped.push(Skipped { line: format!("⊘ [{ordinal}] {} — {reason}", s.name), fingerprint: s.fingerprint, reason });
+        }
+    }
+    (ok, skipped)
 }
 
 fn is_udp(p: &Profile) -> bool {
@@ -177,8 +212,17 @@ fn rank(list: Vec<Candidate>) -> Vec<Candidate> {
         });
     }
     out.retain(|c| c.tcp_ms.is_some() || is_udp(&c.profile));
-    out.sort_by(|a, b| a.tcp_ms.unwrap_or(f64::MAX).total_cmp(&b.tcp_ms.unwrap_or(f64::MAX)));
+    if !tcp_probe_is_blind(&out) {
+        out.sort_by(|a, b| a.tcp_ms.unwrap_or(f64::MAX).total_cmp(&b.tcp_ms.unwrap_or(f64::MAX)));
+    }
     out
+}
+
+/// اگر همه‌ی سرورهای دور زیر ۱ میلی‌ثانیه «وصل» شوند، یک VPN/TUN دیگر روی
+/// همین دستگاه خودش به SYN جواب می‌دهد و این سنجش درباره‌ی سرور چیزی نمی‌گوید.
+fn tcp_probe_is_blind(list: &[Candidate]) -> bool {
+    let samples: Vec<f64> = list.iter().filter_map(|c| c.tcp_ms).collect();
+    samples.len() >= 3 && samples.iter().all(|ms| *ms < 1.0)
 }
 
 /// اولین پورت آزاد از پورت دلخواه. اگر برنامه‌ی دیگری (مثلاً کلاینت پروکسی
@@ -231,12 +275,22 @@ fn publish(app: &AppHandle, generation: u64, c: &Candidate, port: u16, ms: Optio
 fn find_and_connect(app: &AppHandle, generation: u64, skip: Option<&str>) -> Result<Connected, String> {
     with_info(app, |i| i.phase = "testing".into());
     tools::core_ready(app)?;
-    let all = load_candidates(app);
+    let (all, skipped) = load_candidates(app);
+    for s in &skipped {
+        step(app, s.line.clone());
+    }
     if all.is_empty() {
-        return Err("پروفایل قابل اتصالی نیست. در «پروفایل‌ها» لینک وارد کنید یا یک اشتراک اضافه کنید.".into());
+        return Err(if skipped.is_empty() {
+            "پروفایل قابل اتصالی نیست. در «پروفایل‌ها» لینک وارد کنید یا یک اشتراک اضافه کنید.".to_string()
+        } else {
+            format!("هیچ‌کدام از {} پروفایل با sing-box قابل اجرا نیست (دلیل هر کدام در گزارش بالاست).", skipped.len())
+        });
     }
     step(app, format!("سنجش دسترسی {} پروفایل…", all.len()));
     let mut list = rank(all);
+    if tcp_probe_is_blind(&list) {
+        step(app, "⚠ زمان اتصال TCP همه‌ی سرورها زیر ۱ms است؛ احتمالاً VPN/TUN دیگری (مثل Happ) جواب می‌دهد و ترتیب‌بندی معتبر نیست".into());
+    }
     current(app, generation)?;
     if list.is_empty() {
         return Err("هیچ سروری در دسترس نیست. اینترنت دستگاه را بررسی کنید.".into());
@@ -252,11 +306,11 @@ fn find_and_connect(app: &AppHandle, generation: u64, skip: Option<&str>) -> Res
             current(app, generation)?;
             match attempt(app, c, tweak) {
                 Ok((port, ms)) => {
-                    step(app, format!("✓ {} — {:.0} ms ({})", c.name, ms, tweak.label()));
+                    step(app, format!("✓ [{}] {} — {:.0} ms ({})", c.ordinal, c.name, ms, tweak.label()));
                     ok.push((idx, port, ms, tweak));
                     break;
                 }
-                Err(e) => step(app, format!("✗ {} ({}) — {}", c.name, tweak.label(), e.lines().next().unwrap_or(""))),
+                Err(e) => step(app, format!("✗ [{}] {} ({}) — {}", c.ordinal, c.name, tweak.label(), e.lines().next().unwrap_or(""))),
             }
         }
         if ok.len() >= ENOUGH_SUCCESSES {
@@ -390,17 +444,21 @@ pub fn connect_one_blocking(app: &AppHandle, fingerprint: &str) -> Result<Connec
     });
     let run = || -> Result<Connected, String> {
         tools::core_ready(app)?;
-        let c = load_candidates(app)
-            .into_iter()
-            .find(|c| c.fingerprint == fingerprint)
-            .ok_or("متن کامل این پروفایل در انبار امن نیست، یا sing-box آن را پشتیبانی نمی‌کند")?;
+        let (all, skipped) = load_candidates(app);
+        let Some(c) = all.into_iter().find(|c| c.fingerprint == fingerprint) else {
+            return Err(skipped
+                .into_iter()
+                .find(|s| s.fingerprint == fingerprint)
+                .map(|s| s.reason)
+                .unwrap_or_else(|| "این پروفایل پیدا نشد".into()));
+        };
         let mut last_error = String::new();
         for tweak in singbox::tweaks_for(&c.profile) {
             current(app, generation)?;
             match attempt(app, &c, tweak) {
                 Ok((port, ms)) => return publish(app, generation, &c, port, Some(ms), tweak),
                 Err(e) => {
-                    step(app, format!("✗ {} ({}) — {}", c.name, tweak.label(), e.lines().next().unwrap_or("")));
+                    step(app, format!("✗ [{}] {} ({}) — {}", c.ordinal, c.name, tweak.label(), e.lines().next().unwrap_or("")));
                     last_error = e;
                 }
             }
